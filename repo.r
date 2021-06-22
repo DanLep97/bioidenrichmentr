@@ -28,6 +28,7 @@ enrichedGOdata = data.frame(
   bait = character(0),
   goID = character(0),
   term = character(0),
+  score = character(0),
   ont = character(0),
   stringsAsFactors = FALSE
 )
@@ -161,13 +162,15 @@ enrichGOterms = function(bait, ont) {
   )
   weight01FisherResult = runTest(GOdataBP, statistic = "fisher") # default algorithm = weight01
   
-  #add graph to the list of graphs
-  dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), firstSigNodes = 5, useInfo = "def")
-  dotFile = tempfile()
-  toFile(dag$complete.dag, filename = dotFile)
-  dotStr = readLines(dotFile)
-  graphs[[bait]] <<- dotStr
-  unlink(dotFile)
+  if (ont=="BP") {
+    #add graph to the list of graphs
+    dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), firstSigNodes = 5, useInfo = "def")
+    dotFile = tempfile()
+    toFile(dag$complete.dag, filename = dotFile)
+    dotStr = readLines(dotFile)
+    graphs[[bait]] <<- dotStr
+    unlink(dotFile)
+  }
   
   allRes = GenTable(
     GOdataBP,
@@ -226,12 +229,14 @@ enrichBaits = function(length) {
       goID = CCterms$GO.ID, 
       term = Term(CCterms$GO.ID),
       ont = "CC",
+      score = CCterms$weight,
       stringsAsFactors = FALSE)
     BPdf = data.frame(
       bait=baits[i], 
       goID=BPterms$GO.ID, 
       term = Term(BPterms$GO.ID),
       ont = "BP",
+      score = BPterms$weight,
       stringsAsFactors = FALSE)
     PCdf = data.frame(
       bait=baits[i], 
