@@ -1,0 +1,204 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+initialize data and retrieve list of baits then populate them, choose a bait for testing:
+```{r}
+library(topGO)
+library(readxl)
+library(dplyr)
+library(hablar)
+library(naniar)
+library(stringr)
+library(ggplot2)
+library(org.Hs.eg.db)
+library(gridExtra)
+library(Rgraphviz)
+library(ALL)
+library(multtest)
+data(ALL)
+
+rawGO = read_excel("~/Desktop/cours/stage/R/GO.xlsx")
+```
+
+```{r eval=FALSE, include=FALSE}
+classLabel <- as.integer(sapply(ALL$BT, function(x) return(substr(x, 1, 1) == 'T')))
+testList = getPvalues(exprs(ALL), classlabel = classLabel,
+                       alternative = "greater", correction = "BY")
+testList[1:10]
+geneNames[1:10]
+```
+
+create the gene2GO.map file:
+```{r eval=FALSE, include=FALSE}
+
+rawGO$GOterms = str_replace_all(rawGO$GOterms, ";", ",")
+rawGO$GOterms = str_replace_all(rawGO$GOterms, " ", "")
+
+lines = vector(length=nrow(rawGO))
+for(i in 1:nrow(rawGO)) {
+  lines[i] = paste(rawGO$Entry[i], rawGO$GOterms[i], sep="\t")
+}
+fileConn = file("./gene2GO.map")
+writeLines(lines, fileConn)
+
+close(fileConn)
+
+```
+
+after creating the gene2go.map file we create the gene2GOdf file
+```{r eval=FALSE, include=FALSE}
+gene2GO = readMappings(file="./gene2GO.map")
+gene2GOdf = data.frame(uniprotID = character(0), goID = character(0))
+
+for(i in 1:length(gene2GO)) {
+    n = names(gene2GO)[i]
+    goIds = gene2GO[[i]]
+  gene2GOdf = rbind(gene2GOdf, data.frame(
+    uniprotID = rep(n, length(goIds) ), 
+    goID = gene2GO[[i]])
+  )
+}
+
+write.csv2(gene2GOdf, file="./gene2GOdf.csv")
+```
+
+```{r}
+#bait to lookup to
+
+sData = read_excel("sData.xlsx")
+gene2GO = readMappings(file="./gene2GO.map")
+sData = sData %>%
+ convert(dbl(np,
+              nq,
+              nfc,
+              cp,
+              cq,
+              cfc,
+              polyICp,
+              polyICq,
+              polyICFC,
+              polyICFCB,
+              ))
+sData %>%
+  replace_with_na(replace = list(x = c("na", "ns")))
+#sData = sData %>%
+#  filter(conf == "High conf")
+
+bait = "Orf6"
+minNumberOfGenesPerTerms = 5
+
+sData$UniprotID = str_replace_all(sData$UniprotID, "-[0-9]*", "")
+
+baits = unique(sData$Bait)
+geneNames = vector("list", length=length(baits))
+names(geneNames) = baits
+for (i in 1:length(baits)) {
+  rows = sData %>% filter(Bait == baits[i])
+  geneNames[[i]] = rows$UniprotID
+}
+myInterestingGenes = geneNames[[bait]]
+print(c("number of genes for selected bait", length(myInterestingGenes)))
+dataGeneNames = unique(sData$UniprotID)
+geneList = factor(as.integer(dataGeneNames %in% myInterestingGenes))
+names(geneList) = dataGeneNames
+```
+build the top BP ranking:
+```{r}
+GOdataBP = new("topGOdata",
+             description="topGO object for a given bait",
+             ontology="CC",
+             allGenes = geneList,
+             nodeSize= minNumberOfGenesPerTerms,
+             annot= annFUN.gene2GO,
+             gene2GO = gene2GO
+             )
+length(genes(GOdataBP))
+```
+
+
+```{r}
+weight01FisherResult = runTest(GOdataBP, statistic = "fisher", algorithm = "weight01") # default algorithm = weight01
+#classicFisherResult = runTest(GOdataBP, statistic = "fisher", algorithm = "classic")
+```
+
+```{r}
+#display the result in a pdf file
+allRes = GenTable(
+  GOdataBP,
+  #classic = classicFisherResult,
+  weight = weight01FisherResult,
+  #elim = elimFisherResult,
+  topNodes = 20,
+  orderBy="weight"
+)
+allRes
+#pdf(paste(bait,"_BP.", "pdf"), height= 11, width=20)
+#grid.table(allRes)
+#dev.off()
+```
+
+build the GO graph: 
+```{r}
+dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), firstSigNodes = 5, useInfo = "def")
+toFile(dag$complete.dag, filename = "./dagCompleteTest.dot")
+
+#printGraph(GOdataBP, classicFisherResult, firstSigNodes = 5)
+#showSigOfNodes(GOdataBP, score(elimFisherResult), firstSigNodes = 5)
+#showSigOfNodes(GOdataBP, score(classicFisherResult), firstSigNodes = 5)
+```
+
+
+
+```{r}
+dotFile = tempfile()
+dotFile = "./dot.txt"
+toDot(dag$dag, dotFile)
+dotStr = readLines(dotFile)
+unlink(dotFile)
+```
+```{r}
+
+```
+
+some usefull tricks:
+```{r}
+#get the score of randomly selected genes:
+gene.universe = genes(GOdata)
+gene.rand = sample(gene.universe, 30)
+gene.rand.score = geneScore(GOdata, whichGenes = gene.rand) #here using the use.names = FALSE allows to get unnamed vector of scores only
+gene.rand.score
+
+#see the most occurences in terms:
+termStat(GOdata)
+
+#list of genes in the topGO
+sig.genes = sigGenes(GOdata)
+
+#contingency table
+contTable(my.group)
+
+#list of genes inside a term:
+annotatedGenes = genesInTerm(GOdata, usedGoTerms)
+numberOfAnnotGenes = countGenesInTerm(GOdata, selTerms) #number of annotated genes. If selTerms is not provided, every genes are selected
+
+#get the list of scores for a test:
+score(resultFisher)
+```
+
+here we get some stat. we use a desired set of genes and we apply a test on it (like Fisher) and we get a table of contingence.
+```{r}
+goID = "GO:0000003"
+gene.universe = genes(GOdata)
+go.genes = genesInTerm(GOdata, goID)[[1]]
+sig.genes = sigGenes(GOdata)
+my.group = new("classicCount",
+               testStatistic = GOFisherTest,
+               name="fisher",
+               allMembers = gene.universe,
+               groupMembers = go.genes,
+               sigMembers = sig.genes)
+
+```
+
+Les résultats montre que l'usage de l'algorithme weight01 ou weight ne change pas les résultats significatifs pour le test de Fisher.

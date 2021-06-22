@@ -1,0 +1,227 @@
+---
+title: "Bio ID"
+output: html_notebook
+---
+
+```{r}
+library(readxl)
+library(dplyr)
+library(hablar)
+library(naniar)
+library(stringr)
+library(ggplot2)
+
+sData = read_excel("sData.xlsx")
+fileName = "./GO.tab"
+GOdata = read.delim2(fileName,header=TRUE, sep = "\t")
+subcellData = read_excel("./sDataSubcellLocalization.xlsx")
+
+#for PCSF:
+```
+
+```{r}
+
+sData = sData %>%
+ convert(dbl(np,
+              nq,
+              nfc,
+              cp,
+              cq,
+              cfc,
+              polyICp,
+              polyICq,
+              polyICFC,
+              polyICFCB,
+              ))
+sData %>%
+  replace_with_na(replace = list(x = c("na", "ns")))
+
+sDataMerged = left_join(sData, subcellData, by=c("UniprotID" ="Entry"))
+sDataMerged = left_join(sDataMerged, GOdata, by=c("UniprotID"="Entry"))
+sDataMerged$GeneNames = NULL
+#sDataMerged[1:100, c("GeneName", "Location")]
+
+sDataMerged$Location = gsub("(\\[[^\\]]*\\])|(^.*?SUBCELLULAR LOCATION:\\s)|(\\{[^\\}]*\\})","",sDataMerged$Location);
+```
+
+
+Ici on charge les libraries utils pour faire les manips pour faire le graph d'interaction (lien: https://a-little-book-of-r-for-bioinformatics.readthedocs.io/en/latest/src/chapter11.html)
+```{r}
+library(yeastExpData)
+library(graph)
+library(RBGL)
+library(Rgraphviz)
+```
+Ici nous allons créé un objet graphNEL à partir du jeu de donnée sData:
+
+Dans un premier temps on crée le vecteur qui va contenir les edges:
+```{r}
+# make the gene list using desired filters:
+dataFiltered = sDataMerged %>%
+  filter(conf=="High conf", !is.na(Location))
+
+#if Location is applied as filter:
+
+#make the baites list
+interactors = c(unique(dataFiltered$Bait), unique(dataFiltered$GeneName))
+
+#populate each bait with its interactors in order to create the edge list
+edgeList = vector("list", length = length(interactors))
+names(edgeList) = interactors
+```
+
+prepare the .map file for the GO:
+
+```{r}
+#sDataMerged$Gene.ontology.IDs[1:10]
+```
+change the " in file:
+```{r}
+for (i in 1:length(interactors)) {
+  interactor = interactors[i]
+  indexs = c()
+  baitLength = length(unique(dataFiltered$Bait))
+  if (i <= baitLength) {# baits
+    genes = dataFiltered[which(dataFiltered$Bait == interactor), "GeneName"]
+    for (j in 1:nrow(genes)) {
+      indexs = c(indexs, which(interactors == as.character(genes[j, "GeneName"]) ))
+    }
+  } else {
+    baits = dataFiltered[which(dataFiltered$GeneName == interactor), "Bait"]
+    for (j in 1:nrow(baits)) {
+      indexs = c(indexs, which(interactors == as.character(baits[j, "Bait"])))
+    }
+  }
+  edgeList[[i]] = list(edges = indexs)
+}
+```
+
+```{r}
+dataGraph = graphNEL(nodes=interactors, edgeL = edgeList)
+plot(dataGraph, "twopi")
+```
+
+Cree une piechart pour les localisation cellulaires
+```{r}
+possibleLocations = c("Nucleus|Cytoplasm|Membrane|Mitochon|vesicle")
+bait = "NSP2"
+dataLocations = dataFiltered %>% filter(str_detect(Location, possibleLocations), Bait==bait)
+locationNames =  unlist(str_split(possibleLocations, fixed("|")))
+locations = data.frame(id=1:length(locationNames), count=1:length(locationNames), locNames=locationNames)
+for (i in 1:nrow(locations)) {
+  rows = dataLocations %>% filter(str_detect(Location, locationNames[i]))
+  locations[i, "count"] = nrow(rows)
+}
+# ----- This section prepare a dataframe for labels ---- #
+# Get the name and the y position of each label
+label_data <- locations
+ 
+# calculate the ANGLE of the labels
+number_of_bar <- nrow(label_data)
+angle <-  90 - 360 * (label_data$id-0.5) /number_of_bar     # I substract 0.5 because the letter must have the angle of the center of the bars. Not extreme right(1) or extreme left (0)
+ 
+# calculate the alignment of labels: right or left
+# If I am on the left part of the plot, my labels have currently an angle < -90
+label_data$hjust<-ifelse( angle < -90, 1, 0)
+ 
+# flip angle BY to make them readable
+label_data$angle<-ifelse(angle < -90, angle+180, angle)
+# ----- ------------------------------------------- ---- #
+# Make the plot
+p <- ggplot(locations, aes(x=as.factor(id), y=count) ) +       # Note that id is a factor. If x is numeric, there is some space between the first bar
+  
+  # This add the bars with a blue color
+  geom_bar(stat="identity", fill=rainbow(length(locationNames))) +
+  
+  # Limits of the plot = very important. The negative value controls the size of the inner circle, the positive one is useful to add size over each bar
+  ylim(-15,max(locations$count)+20) +
+  
+  # Custom the theme: no axis title and no cartesian grid
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = unit(rep(-2,4), "cm")     # This remove unnecessary margin around plot
+  ) +
+  
+  # This makes the coordinate polar instead of cartesian.
+  coord_polar(start = 0) +
+  geom_text(data=label_data, aes(x=id, y=count+3, label=locNames, hjust=label_data$hjust), color="black", fontface="bold",alpha=0.6, size=2.5, angle= label_data$angle, inherit.aes = FALSE )
+
+```
+
+```{r}
+# Make the plot
+p <- ggplot(locations, aes(x=as.factor(possibleLocations), y=locations[[]] )) +       # Note that id is a factor. If x is numeric, there is some space between the first bar
+  
+  # This add the bars with a blue color
+  geom_bar(stat="identity", fill=alpha("blue", 0.3)) +
+  
+  # Limits of the plot = very important. The negative value controls the size of the inner circle, the positive one is useful to add size over each bar
+  ylim(-100,120) +
+  
+  # Custom the theme: no axis title and no cartesian grid
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = unit(rep(-2,4), "cm")     # This remove unnecessary margin around plot
+  ) +
+  
+  # This makes the coordinate polar instead of cartesian.
+  coord_polar(start = 0)
+p
+```
+
+
+```{r}
+V = LETTERS[1:4]
+edL1 = vector("list", length=4)
+names(edL1) = V
+for (i in 1:4)
+  edL1[[i]] = list(edges=c(2,1,4,3)[i], weights = sqrt(i))
+gR = graphNEL(nodes=V, edgeL=edL1)
+gR
+```
+
+Un node contient les vertices (les protéines)
+```{r}
+myNodes = nodes(litG)
+myNodes[1:10]
+```
+
+A partir de ces vertices nous pouvons déterminer quelles protéines sont en interaction avec d'autre:
+```{r}
+adj(litG, "YBR009C")
+```
+
+degree est le nombre d'interaction qui existe pour un vertice donnee<
+```{r}
+myDegrees = degree(litG)
+hist(myDegrees, col="green")
+```
+
+Le graph peut contenir des liens entre protéines qui forme un réseau d'interaction et il existe des interactions en dehors de ce réseau, ce sont des composants de graph qui sont enfait les sous-graph du graph principal. Pour voir le nombre de composant:
+```{r}
+myConnectedComponents = connectedComp(litG)
+lengthOfComponents = length(myConnectedComponents)
+componentSize = numeric(length = lengthOfComponents)
+for(i in 1:lengthOfComponents) {
+  component = myConnectedComponents[[i]]
+  lengthOfComponent = length(component)
+  componentSize[i] = lengthOfComponent
+}
+which.max(componentSize)
+```
+A partir de ces composants nous pouvons créé des sous-graphs:
+```{r}
+component = myConnectedComponents[[52]]
+componentGraph = subGraph(component, litG)
+componentGraph
+mySubGraph = layoutGraph(componentGraph, layoutType="neato")
+renderGraph(mySubGraph)
+```
+
+
