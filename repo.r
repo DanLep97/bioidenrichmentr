@@ -8,6 +8,7 @@ library(ggplot2)
 library(org.Hs.eg.db)
 library(gridExtra)
 library(Rgraphviz)
+library(threadr)
 
 # data prep:
 sData = read_excel("sData.xlsx")
@@ -302,6 +303,7 @@ function(length) {
     "baits" = baits[1:length],
     "graphs" = graphs
   )
+  write_json(res, "~/Desktop/sitestage/enrichedData.json")
   return(res)
 }
 

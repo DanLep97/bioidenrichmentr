@@ -1,0 +1,13 @@
+---
+title: "FOIanalysis"
+author: "Lepikhov Daniil"
+date: "6/23/2021"
+output: html_document
+---
+
+Initialize data: 
+
+```{r}
+
+```
+
