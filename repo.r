@@ -16,13 +16,7 @@ gene2GO = readMappings(file="./gene2GO.map")
 gene2GOdf = read.csv2("./gene2GOdf.csv")
 
 #Enriched genes associated to GO term and its bait
-enrichedGenes = data.frame(
-  bait = character(0),
-  goID = character(0),
-  ont = character(0),
-  uniprotID = character(0),
-  stringsAsFactors = FALSE
-)
+genesOfTerm = data.frame()
 
 #enrich data for the fingerprint
 enrichedGOdata = data.frame(
@@ -92,58 +86,61 @@ cors <- function(req, res) {
 }
 
 #REPO FUNCTIONS
-filterGenes = function(GOids, ont, bait, geneRange = unlist(geneNames, use.names = FALSE) ) {
-  
-  #FILTER OUT REDONCENCIES IN ANCESTORS 
+filterGenes = function(GOids, ont, bait, goData) {
   
   if (ont == "CC") {
     totAncestors = as.list(GOCCPARENTS)
+    totOffspring = as.list(GOCCOFFSPRING)
   } else {
     totAncestors = as.list(GOBPPARENTS)
+    totOffspring = as.list(GOBPOFFSPRING)
   }
-  ancestors = totAncestors[GOids]
-  
-  GOidsLength = length(GOids)
-  ancestorsLength = length(ancestors)
-  
-  if(GOidsLength == ancestorsLength) { # we make sure every terms has a list of ancestors
-    for(i in 1:ancestorsLength) {
-      term = names(ancestors)[i]
-      
-      ancestorsOfTerm = unname(ancestors[[i]])
-      ancestorsOfTerm = ancestorsOfTerm[-length(ancestorsOfTerm)] # remove the last element of gene list which is "all"
-      
-      genesOfTerm = gene2GOdf[which(
-        gene2GOdf$uniprotID %in% geneRange & 
-          gene2GOdf$goID == term
-      ), "uniprotID"]
-      genesOfTerm = as.vector(genesOfTerm)
-      
-      genesOfTermAncestors = gene2GOdf[which(
-        gene2GOdf$uniprotID %in% geneRange & 
-          gene2GOdf$goID %in% ancestorsOfTerm
-      ), "uniprotID"]
-      genesOfTermAncestors = as.vector(genesOfTermAncestors)
-      
-      intersections = intersect(genesOfTerm, genesOfTermAncestors)
-      genesOfTerm = genesOfTerm[!genesOfTerm %in% intersections]
-      
-      #INSERT FILTERED GENES IN THE DATAFRAME
-      lengthOfdf = length(genesOfTerm)
-      df = data.frame(
-        bait = rep(bait, lengthOfdf),
-        goID = rep(term, lengthOfdf),
-        ont = rep(ont, lengthOfdf),
-        uniprotID = genesOfTerm,
-        stringsAsFactors = FALSE
-      )
-      enrichedGenes <<- rbind(enrichedGenes, df)
+  for(i in 1:length(GOids)) {
+    goTerm = GOids[i]
+    annotatedGenesInGoTerm = genesInTerm(goData, goTerm)[[1]]
+    
+    
+    ## FIND UNIQUE GENES IN TERM
+    genesInGoTerm = gene2GOdf[which(
+      gene2GOdf$goID == goTerm &
+        gene2GOdf$uniprotID %in% annotatedGenesInGoTerm
+    ), "uniprotID"]
+    
+    ## FIND REDENDANCIES IN ANCESTORS AND CHILDREN
+    ancestors = unname(totAncestors[[goTerm]])
+    offspring = unname(totOffspring[[goTerm]])
+    
+    offspringGenes = gene2GOdf[which(
+      gene2GOdf$goID %in% offspring &
+        gene2GOdf$uniprotID %in% annotatedGenesInGoTerm
+    ), "uniprotID"]
+    offspringGenes = unique(offspringGenes)
+    
+    ancestorsGenes = gene2GOdf[which(
+      gene2GOdf$goID %in% ancestors &
+        gene2GOdf$uniprotID %in% annotatedGenesInGoTerm
+    ), "uniprotID"]
+    ancestorsGenes = unique(ancestorsGenes)
+    
+    for(j in 1:length(annotatedGenesInGoTerm)) {
+      gene = annotatedGenesInGoTerm[j]
+      str = ""
+      if (gene %in% offspringGenes) {
+        str = paste(str, "offspring", sep = "|")
+      }
+      if (gene %in% ancestorsGenes) {
+        str = paste(str, "ancestor", sep = "|")
+      }
+      if (gene %in% genesInGoTerm) {
+        str = paste(str, "inTerm", sep = "|")
+      }
+      genesOfTerm <<- rbind(genesOfTerm, data.frame(
+        goID = goTerm,
+        gene = gene,
+        uniqueness = str
+      ))
     }
-  } else {
-    print("All terms do not have ancestors :/")
   }
-  
-  #
 }
 enrichGOterms = function(bait, ont) {
   minNumberOfGenesPerTerms = 5
@@ -179,7 +176,7 @@ enrichGOterms = function(bait, ont) {
     topNodes = 20,
     orderBy="weight"
   )
-  filterGenes(allRes$GO.ID, ont, bait, myInterestingGenes)
+  filterGenes(allRes$GO.ID, ont, bait, GOdataBP)
   return(allRes)
 }
 enrichPC = function(bait) {
@@ -290,14 +287,17 @@ function(length) {
   superEnrichedPCdata = rbind(superEnrichedPCdata, baitPCensembl)
   }
   
-  #eliminate duplicates genes
-  noDuplicatedEnrichedGenes = enrichedGenes[!duplicated(enrichedGenes[c("uniprotID")]),]
-  noDuplicatedEnrichedGenes$term = Term(noDuplicatedEnrichedGenes$goID)
+  #eliminate duplicates genes NOT ACTIVE
+  indexsToRem = which(
+    genesOfTerm$uniqueness == "|offspring|ancestor|inTerm" |
+      duplicated(genesOfTerm$gene)
+  )
+  genesOfTerm[-indexsToRem,]
   
   #output the result as a list
   res = list(
     #"enrichedGenes" = enrichedGenes,
-    "enrichedGenes" = noDuplicatedEnrichedGenes,
+    "enrichedGenes" = genesOfTerm,
     "enrichedGOdata" = superEnrichedGOdata,
     "enrichedPCdata" = superEnrichedPCdata,
     "baits" = baits[1:length],

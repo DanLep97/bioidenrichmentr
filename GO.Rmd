@@ -18,7 +18,12 @@ library(ALL)
 library(multtest)
 data(ALL)
 
+```
+
+```{r}
 rawGO = read_excel("~/Desktop/cours/stage/R/GO.xlsx")
+testGO = read.table(file = 'QuickGO-annotations-1624617382809-20210625.tsv', sep = '\t', header = TRUE)
+gene2GOdf = read.csv2("./gene2GOdf.csv", stringsAsFactors = FALSE)
 ```
 
 ```{r eval=FALSE, include=FALSE}
@@ -54,10 +59,10 @@ gene2GOdf = data.frame(uniprotID = character(0), goID = character(0))
 for(i in 1:length(gene2GO)) {
     n = names(gene2GO)[i]
     goIds = gene2GO[[i]]
-  gene2GOdf = rbind(gene2GOdf, data.frame(
-    uniprotID = rep(n, length(goIds) ), 
-    goID = gene2GO[[i]])
-  )
+    gene2GOdf = rbind(gene2GOdf, data.frame(
+      uniprotID = rep(n, length(goIds) ), 
+      goID = goIds)
+    )
 }
 
 write.csv2(gene2GOdf, file="./gene2GOdf.csv")
@@ -85,7 +90,7 @@ sData %>%
 #sData = sData %>%
 #  filter(conf == "High conf")
 
-bait = "Orf6"
+bait = "E"
 minNumberOfGenesPerTerms = 5
 
 sData$UniprotID = str_replace_all(sData$UniprotID, "-[0-9]*", "")
@@ -106,14 +111,97 @@ names(geneList) = dataGeneNames
 build the top BP ranking:
 ```{r}
 GOdataBP = new("topGOdata",
-             description="topGO object for a given bait",
-             ontology="CC",
-             allGenes = geneList,
-             nodeSize= minNumberOfGenesPerTerms,
-             annot= annFUN.gene2GO,
-             gene2GO = gene2GO
-             )
+  description="topGO object for a given bait",
+  ontology="CC",
+  allGenes = geneList,
+  nodeSize= minNumberOfGenesPerTerms,
+  annot= annFUN.gene2GO,
+  gene2GO = gene2GO
+)
 length(genes(GOdataBP))
+```
+
+```{r}
+filterGenes = function(GOids, ont, bait, 
+ geneRange = unlist(geneNames, use.names = FALSE),
+ goData
+) {
+  #geneRange = unique(sData$UniprotID)
+  #FILTER OUT REDONCENCIES IN ANCESTORS 
+  
+  if (ont == "CC") {
+    totAncestors = as.list(GOCCPARENTS)
+  } else {
+    totAncestors = as.list(GOBPPARENTS)
+  }
+  ancestors = totAncestors[GOids]
+  
+  GOidsLength = length(GOids)
+  
+  if(GOidsLength == ancestorsLength) { # we make sure every terms has a list of ancestors
+    for(i in 1:ancestorsLength) {
+      term = GOids[i]
+      print(term)
+      
+      ancestorsOfTerm = unname(ancestors[[i]])
+      ancestorsOfTerm = ancestorsOfTerm[-length(ancestorsOfTerm)] # remove the last element of gene list which is "all"
+      
+      genesOfTerm = gene2GOdf[which(
+        gene2GOdf$uniprotID %in% geneRange &
+          gene2GOdf$goID == term
+      ),]
+      genesOfTerm = genesOfTerm$uniprotID
+      genesOfTerm = as.vector(genesOfTerm)
+      print(genesOfTerm)
+      #print("genesOfTerm before intersections delete: ")
+      #print(length(genesOfTerm))
+      
+      genesOfTermAncestors = gene2GOdf[which(
+        gene2GOdf$uniprotID %in% geneRange & 
+          gene2GOdf$goID %in% ancestorsOfTerm
+        ), "uniprotID"]
+      genesOfTermAncestors = as.vector(genesOfTermAncestors)
+      
+      intersections = intersect(genesOfTerm, genesOfTermAncestors)
+      #genesOfTerm = genesOfTerm[!genesOfTerm %in% intersections] deprecated behavior
+      
+      #gene intersections should be marked as such in the df
+      
+      #print("genesOfTerm: ")
+      #print(length(genesOfTerm))
+      #print("genesOfTermAncestors: ")
+      #print(length(genesOfTermAncestors))
+      #print("intersections: ")
+      #print(length(intersections))
+      #print(" ")
+      uniquenessOfGenes = c()
+      #print(intersections)
+      for(j in 1:length(genesOfTerm)) {
+        if(genesOfTerm[j] %in% intersections) {
+          uniquenessOfGenes[j] = "anc"
+        } else {
+          uniquenessOfGenes[j] = "unique"
+        }
+      }
+
+      #print(uniquenessOfGenes)
+      
+      #INSERT FILTERED GENES IN THE DATAFRAME
+      lengthOfdf = length(genesOfTerm)
+      df = data.frame(
+        bait = rep(bait, lengthOfdf),
+        goID = rep(term, lengthOfdf),
+        ont = rep(ont, lengthOfdf),
+        uniprotID = genesOfTerm,
+        uniqueness = uniquenessOfGenes,
+        stringsAsFactors = FALSE
+      )
+      enrichedGenes <<- rbind(enrichedGenes, df)
+    }
+  } else {
+    print("All terms do not have ancestors :/")
+  }
+}
 ```
 
 
@@ -148,8 +236,6 @@ toFile(dag$complete.dag, filename = "./dagCompleteTest.dot")
 #showSigOfNodes(GOdataBP, score(classicFisherResult), firstSigNodes = 5)
 ```
 
-
-
 ```{r}
 dotFile = tempfile()
 dotFile = "./dot.txt"
@@ -157,10 +243,6 @@ toDot(dag$dag, dotFile)
 dotStr = readLines(dotFile)
 unlink(dotFile)
 ```
-```{r}
-
-```
-
 some usefull tricks:
 ```{r}
 #get the score of randomly selected genes:
@@ -193,11 +275,11 @@ gene.universe = genes(GOdata)
 go.genes = genesInTerm(GOdata, goID)[[1]]
 sig.genes = sigGenes(GOdata)
 my.group = new("classicCount",
-               testStatistic = GOFisherTest,
-               name="fisher",
-               allMembers = gene.universe,
-               groupMembers = go.genes,
-               sigMembers = sig.genes)
+  testStatistic = GOFisherTest,
+  name="fisher",
+  allMembers = gene.universe,
+  groupMembers = go.genes,
+  sigMembers = sig.genes)
 
 ```
 
