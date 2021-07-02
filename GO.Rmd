@@ -122,6 +122,12 @@ length(genes(GOdataBP))
 ```
 
 ```{r}
+weight01FisherResult = runTest(GOdataBP, statistic = "fisher", algorithm = "weight01")
+dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), useFullNames = TRUE, firstSigNodes = 5, .NO.CHAR = 60, useInfo = "def")
+```
+
+
+```{r}
 filterGenes = function(GOids, ont, bait, 
  geneRange = unlist(geneNames, use.names = FALSE),
  goData

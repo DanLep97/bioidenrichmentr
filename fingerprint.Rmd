@@ -62,8 +62,10 @@ gene2GOdf = read.csv2("./gene2GOdf.csv", stringsAsFactors = FALSE)
 genesOfTerm = data.frame()
 
 #Graph containing the dotlist strings
-graphs = vector("list", length=length(baits))
-names(graphs) = baits
+graphsBP = vector("list", length=length(baits))
+graphsCC = vector("list", length=length(baits))
+names(graphsCC) = baits
+names(graphsBP) = baits
 
 #List containing CC piechart data
 ccList = vector("list", length=length(baits))
@@ -93,14 +95,18 @@ enrichGOterms = function(bait, ont) {
   weight01FisherResult = runTest(GOdataBP, statistic = "fisher") # default algorithm = weight01
   
   #add graph to the list of graphs
+  dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), useFullNames = TRUE, firstSigNodes = 5, useInfo = "all")
+  dotFile = tempfile()
+  toFile(dag$complete.dag, filename = dotFile)
+  dotStr = readLines(dotFile)
   if (ont == "BP") {
-    dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), firstSigNodes = 5, useInfo = "all")
-    dotFile = tempfile()
-    toFile(dag$complete.dag, filename = dotFile)
-    dotStr = readLines(dotFile)
-    graphs[[bait]] <<- dotStr
-    unlink(dotFile)
+    graphsBP[[bait]] <<- dotStr
+  } else {
+    graphsCC[[bait]] <<- dotStr
   }
+  unlink(dotFile)
+  
+  #generate piechart data if cc ont
   
   allRes = GenTable(
     GOdataBP,
@@ -305,6 +311,9 @@ for(i in 1:28) {
   }
 
   superEnrichedGOdata = rbind(superEnrichedGOdata, baitGOensembl)
+  
+  #remove useless entries from graphs
+  
 }
 #PC enrichment? not for now
 ```
@@ -323,6 +332,7 @@ for (i in 1:nrow(genesOfTerm)) {
 }
 ```
 
-
+generate data for the piechart:
 ```{r}
+
 ```
