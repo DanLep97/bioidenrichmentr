@@ -62,8 +62,10 @@ for (i in 1:length(baits)) {
 }
 
 #Graph containing the dotlist strings
-graphs = vector("list", length=length(baits))
-names(graphs) = baits
+graphsBP = vector("list", length=length(baits))
+graphsCC = vector("list", length=length(baits))
+names(graphsCC) = baits
+names(graphsBP) = baits
 
 #CORUM data prep:
 corumData = read.delim2("./CORUM.txt", sep="\t", stringsAsFactors = FALSE)
@@ -86,7 +88,7 @@ cors <- function(req, res) {
 }
 
 #REPO FUNCTIONS
-filterGenes = function(GOids, ont, bait, goData) {
+filterGenes = function(GOids, ont, bait, goData, geneRange) {
   
   if (ont == "CC") {
     totAncestors = as.list(GOCCPARENTS)
@@ -98,12 +100,12 @@ filterGenes = function(GOids, ont, bait, goData) {
   for(i in 1:length(GOids)) {
     goTerm = GOids[i]
     annotatedGenesInGoTerm = genesInTerm(goData, goTerm)[[1]]
-    
+    sigGenesInTerm = annotatedGenesInGoTerm[annotatedGenesInGoTerm %in% geneRange]
     
     ## FIND UNIQUE GENES IN TERM
     genesInGoTerm = gene2GOdf[which(
       gene2GOdf$goID == goTerm &
-        gene2GOdf$uniprotID %in% annotatedGenesInGoTerm
+        gene2GOdf$uniprotID %in% sigGenesInTerm
     ), "uniprotID"]
     
     ## FIND REDENDANCIES IN ANCESTORS AND CHILDREN
@@ -112,18 +114,17 @@ filterGenes = function(GOids, ont, bait, goData) {
     
     offspringGenes = gene2GOdf[which(
       gene2GOdf$goID %in% offspring &
-        gene2GOdf$uniprotID %in% annotatedGenesInGoTerm
+        gene2GOdf$uniprotID %in% sigGenesInTerm
     ), "uniprotID"]
-    offspringGenes = unique(offspringGenes)
     
     ancestorsGenes = gene2GOdf[which(
       gene2GOdf$goID %in% ancestors &
-        gene2GOdf$uniprotID %in% annotatedGenesInGoTerm
+        gene2GOdf$uniprotID %in% sigGenesInTerm
     ), "uniprotID"]
     ancestorsGenes = unique(ancestorsGenes)
     
-    for(j in 1:length(annotatedGenesInGoTerm)) {
-      gene = annotatedGenesInGoTerm[j]
+    for(j in 1:length(sigGenesInTerm)) {
+      gene = sigGenesInTerm[j]
       str = ""
       if (gene %in% offspringGenes) {
         str = paste(str, "offspring", sep = "|")
@@ -134,9 +135,12 @@ filterGenes = function(GOids, ont, bait, goData) {
       if (gene %in% genesInGoTerm) {
         str = paste(str, "inTerm", sep = "|")
       }
+      geneSymbol = sData[which(sData$UniprotID == gene),"GeneName"]
       genesOfTerm <<- rbind(genesOfTerm, data.frame(
+        stringsAsFactors = FALSE,
         goID = goTerm,
-        gene = gene,
+        uniprotID = gene,
+        geneSymbol = geneSymbol[1,"GeneName"],
         uniqueness = str
       ))
     }
@@ -151,24 +155,33 @@ enrichGOterms = function(bait, ont) {
   names(geneList) = dataGeneNames
   
   GOdataBP = new("topGOdata",
-                 description="topGO object for a given bait",
-                 ontology=ont,
-                 allGenes = geneList,
-                 nodeSize= minNumberOfGenesPerTerms,
-                 annot= annFUN.gene2GO,
-                 gene2GO = gene2GO
+    description="topGO object for a given bait",
+    ontology=ont,
+    allGenes = geneList,
+    nodeSize= minNumberOfGenesPerTerms,
+    annot= annFUN.gene2GO,
+    gene2GO = gene2GO
   )
   weight01FisherResult = runTest(GOdataBP, statistic = "fisher") # default algorithm = weight01
   
-  if (ont=="BP") {
-    #add graph to the list of graphs
-    dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), firstSigNodes = 5, useInfo = "def")
-    dotFile = tempfile()
-    toFile(dag$complete.dag, filename = dotFile)
-    dotStr = readLines(dotFile)
-    graphs[[bait]] <<- dotStr
-    unlink(dotFile)
+  #add graph to the list of graphs
+  dag = showSigOfNodes(
+    GOdataBP, 
+    score(weight01FisherResult), 
+    useFullNames = TRUE,
+    useInfo = "def",
+    .NO.CHAR = 60,
+    firstSigNodes = 5
+  )
+  dotFile = tempfile()
+  toFile(dag$complete.dag, filename = dotFile)
+  dotStr = readLines(dotFile)
+  if (ont == "BP") {
+    graphsBP[[bait]] <<- dotStr
+  } else {
+    graphsCC[[bait]] <<- dotStr
   }
+  unlink(dotFile)
   
   allRes = GenTable(
     GOdataBP,
@@ -176,7 +189,7 @@ enrichGOterms = function(bait, ont) {
     topNodes = 20,
     orderBy="weight"
   )
-  filterGenes(allRes$GO.ID, ont, bait, GOdataBP)
+  filterGenes(allRes$GO.ID, ont, bait, GOdataBP, myInterestingGenes)
   return(allRes)
 }
 enrichPC = function(bait) {
@@ -218,6 +231,8 @@ enrichPC = function(bait) {
 }
 enrichBaits = function(length) {
   for(i in 1:length) {
+    print(paste("enriching bait", baits[i], ".", i, "out of", length, sep=" "))
+    
     BPterms = enrichGOterms(baits[i], "BP") # enrich biological processes
     CCterms = enrichGOterms(baits[i], "CC") # enrich cellular locations
     PCterms = enrichPC(baits[i]) # enrich protein complexes
@@ -256,18 +271,13 @@ enrichBaits = function(length) {
 function(length) {
   enrichBaits(length)
   superEnrichedGOdata = data.frame()
-  superEnrichedPCdata = data.frame()
   for(i in 1:length) {
     bait = baits[i]
     
     baitGOensembl = enrichedGOdata[which(enrichedGOdata$bait == bait),]
     substrGOensembl = enrichedGOdata[which(enrichedGOdata$bait != bait),]
     
-    baitPCensembl = enrichedPCdata[which(enrichedPCdata$bait == bait),]
-    substrPCensembl = enrichedPCdata[which(enrichedPCdata$bait != bait),]
-    
     intersectGO = na.omit(intersect(baitGOensembl$goID, substrGOensembl$goID))
-    intersectPC = na.omit(intersect(baitPCensembl$pcID, substrPCensembl$pcID))
     
     for(j in 1:length(intersectGO)) {
       ind = which(
@@ -276,32 +286,29 @@ function(length) {
       baitGOensembl = baitGOensembl[-ind,]
     }
     
-    for(j in 1:length(intersectPC)) {
-      ind = which(
-        baitPCensembl$pcID == intersectPC[j]
-      ) 
-      baitPCensembl = baitPCensembl[-ind,]
-    }
-    
   superEnrichedGOdata = rbind(superEnrichedGOdata, baitGOensembl)
-  superEnrichedPCdata = rbind(superEnrichedPCdata, baitPCensembl)
   }
   
-  #eliminate duplicates genes NOT ACTIVE
-  indexsToRem = which(
-    genesOfTerm$uniqueness == "|offspring|ancestor|inTerm" |
-      duplicated(genesOfTerm$gene)
+  #highlight duplicated genes 
+  duplicatesInEnrichedGenes = which(duplicated(genesOfTerm$uniprotID) & 
+    genesOfTerm$goID %in% superEnrichedGOdata$goID
   )
-  genesOfTerm[-indexsToRem,]
+  duplicates = genesOfTerm[duplicatesInEnrichedGenes, "uniprotID"]
+  for (i in 1:nrow(genesOfTerm)) {
+    if (genesOfTerm[i, "uniprotID"] %in% duplicates) {
+      genesOfTerm[i, "uniqueness"] = paste(genesOfTerm[i, "uniqueness"], "duplicated", sep="|")
+    }
+  }
   
   #output the result as a list
   res = list(
     #"enrichedGenes" = enrichedGenes,
     "enrichedGenes" = genesOfTerm,
     "enrichedGOdata" = superEnrichedGOdata,
-    "enrichedPCdata" = superEnrichedPCdata,
+    "enrichedPCdata" = enrichedPCdata,
     "baits" = baits[1:length],
-    "graphs" = graphs
+    "graphsBP" = graphsBP,
+    "graphsCC" = graphsCC
   )
   write_json(res, "~/Desktop/sitestage/enrichedData.json")
   return(res)
@@ -332,6 +339,7 @@ function(bait) {
   # make the occurence count table with added columns of interest as the presentation table. 
   idCounts = as.data.frame(table(CORUMdf$Complexes), stringsAsFactors = FALSE)
   names(idCounts) = c("id", "occurences")
+  idCounts = idCounts[which(idCounts$occurences>=2),]
   returnedTable = merge(x=corumData, y=idCounts, by.y="id", by.x="ComplexID", all.y=TRUE)
   return(returnedTable)
 }

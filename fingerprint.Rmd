@@ -59,14 +59,7 @@ gene2GO = readMappings(file="./gene2GO.map")
 gene2GOdf = read.csv2("./gene2GOdf.csv", stringsAsFactors = FALSE)
 
 #Enriched genes associated to GO term and its bait
-enrichedGenes = data.frame(
-  bait = character(0),
-  goID = character(0),
-  ont = character(0),
-  uniprotID = character(0),
-  uniqueness = character(0),
-  stringsAsFactors = FALSE
-)
+genesOfTerm = data.frame()
 
 #Graph containing the dotlist strings
 graphs = vector("list", length=length(baits))
@@ -76,6 +69,7 @@ names(graphs) = baits
 ccList = vector("list", length=length(baits))
 names(ccList) = baits
 ```
+
 
 Generating GOBP and GOCC:
 
@@ -115,94 +109,77 @@ enrichGOterms = function(bait, ont) {
     orderBy="weight"
   )
   print(allRes)
-  filterGenes(allRes$GO.ID, ont, bait, myInterestingGenes)
+  filterGenes(allRes$GO.ID, ont, bait, GOdataBP, myInterestingGenes)
   return(allRes)
 }
 ```
 filtered genes has to be without ancestor redondencies, associated to GO term but more importantly to the bait because this information will be used for interaction verification experience. Drug design can be done only with the most important genes of associated functions, the bait is not interesting for this purpose.
 GeneRange contains the list of genes that the search should be limit to because gene2GOdf contains every genes of each terms. Filtered genes based only on GOID therefore doesn't make any sense without a restricted set of genes of reference (myInterestingGenes)
 ```{r}
-filterGenes = function(GOids, ont, bait, geneRange = unlist(geneNames, use.names = FALSE) ) {
-  #geneRange = unique(sData$UniprotID)
-  #FILTER OUT REDONCENCIES IN ANCESTORS 
+genesOfTerm = data.frame(stringsAsFactors = FALSE)
+filterGenes = function(GOids, ont, bait, goData, geneRange) {
   
   if (ont == "CC") {
     totAncestors = as.list(GOCCPARENTS)
+    totOffspring = as.list(GOCCOFFSPRING)
   } else {
     totAncestors = as.list(GOBPPARENTS)
+    totOffspring = as.list(GOBPOFFSPRING)
   }
-  ancestors = totAncestors[GOids]
-  
-  GOidsLength = length(GOids)
-  ancestorsLength = length(ancestors)
-  
-  if(GOidsLength == ancestorsLength) { # we make sure every terms has a list of ancestors
-    for(i in 1:ancestorsLength) {
-      term = GOids[i]
-      print(term)
-      
-      ancestorsOfTerm = unname(ancestors[[i]])
-      ancestorsOfTerm = ancestorsOfTerm[-length(ancestorsOfTerm)] # remove the last element of gene list which is "all"
-      
-      genesOfTerm = gene2GOdf %>%
-        filter(uniprotID %in% geneRange & goID == term)
-      genesOfTerm = genesOfTerm$uniprotID
-      genesOfTerm = as.vector(genesOfTerm)
-      print(genesOfTerm)
-      #print("genesOfTerm before intersections delete: ")
-      #print(length(genesOfTerm))
-      
-      genesOfTermAncestors = gene2GOdf[which(
-        gene2GOdf$uniprotID %in% geneRange & 
-          gene2GOdf$goID %in% ancestorsOfTerm
-        ), "uniprotID"]
-      genesOfTermAncestors = as.vector(genesOfTermAncestors)
-      
-      intersections = intersect(genesOfTerm, genesOfTermAncestors)
-      #genesOfTerm = genesOfTerm[!genesOfTerm %in% intersections] deprecated behavior
-      
-      #gene intersections should be marked as such in the df
-      
-      #print("genesOfTerm: ")
-      #print(length(genesOfTerm))
-      #print("genesOfTermAncestors: ")
-      #print(length(genesOfTermAncestors))
-      #print("intersections: ")
-      #print(length(intersections))
-      #print(" ")
-      uniquenessOfGenes = c()
-      #print(intersections)
-      for(j in 1:length(genesOfTerm)) {
-        if(genesOfTerm[j] %in% intersections) {
-          uniquenessOfGenes[j] = "anc"
-        } else {
-          uniquenessOfGenes[j] = "unique"
-        }
+  for(i in 1:length(GOids)) {
+    goTerm = GOids[i]
+    annotatedGenesInGoTerm = genesInTerm(goData, goTerm)[[1]]
+    sigGenesInTerm = annotatedGenesInGoTerm[annotatedGenesInGoTerm %in% geneRange]
+    
+    ## FIND UNIQUE GENES IN TERM
+    genesInGoTerm = gene2GOdf[which(
+      gene2GOdf$goID == goTerm &
+        gene2GOdf$uniprotID %in% sigGenesInTerm
+    ), "uniprotID"]
+    
+    ## FIND REDENDANCIES IN ANCESTORS AND CHILDREN
+    ancestors = unname(totAncestors[[goTerm]])
+    offspring = unname(totOffspring[[goTerm]])
+    
+    offspringGenes = gene2GOdf[which(
+      gene2GOdf$goID %in% offspring &
+        gene2GOdf$uniprotID %in% sigGenesInTerm
+    ), "uniprotID"]
+    
+    ancestorsGenes = gene2GOdf[which(
+      gene2GOdf$goID %in% ancestors &
+        gene2GOdf$uniprotID %in% sigGenesInTerm
+    ), "uniprotID"]
+    ancestorsGenes = unique(ancestorsGenes)
+    
+    for(j in 1:length(sigGenesInTerm)) {
+      gene = sigGenesInTerm[j]
+      str = ""
+      if (gene %in% offspringGenes) {
+        str = paste(str, "offspring", sep = "|")
       }
-
-      #print(uniquenessOfGenes)
-      
-      #INSERT FILTERED GENES IN THE DATAFRAME
-      lengthOfdf = length(genesOfTerm)
-      df = data.frame(
-        bait = rep(bait, lengthOfdf),
-        goID = rep(term, lengthOfdf),
-        ont = rep(ont, lengthOfdf),
-        uniprotID = genesOfTerm,
-        uniqueness = uniquenessOfGenes,
-        stringsAsFactors = FALSE
-      )
-      enrichedGenes <<- rbind(enrichedGenes, df)
+      if (gene %in% ancestorsGenes) {
+        str = paste(str, "ancestor", sep = "|")
+      }
+      if (gene %in% genesInGoTerm) {
+        str = paste(str, "inTerm", sep = "|")
+      }
+      geneSymbol = sData[which(sData$UniprotID == gene),"GeneName"]
+      genesOfTerm <<- rbind(genesOfTerm, data.frame(
+        stringsAsFactors = FALSE,
+        goID = goTerm,
+        uniprotID = gene,
+        geneSymbol = geneSymbol[1,"GeneName"],
+        uniqueness = str
+      ))
     }
-  } else {
-    print("All terms do not have ancestors :/")
   }
 }
 ```
 
 
 ```{r eval=FALSE}
-enrichGOterms("NSP3", "BP")
+enrichGOterms("NSP3", "CC")
 ```
 
 
@@ -234,6 +211,7 @@ enrichPC = function(bait) {
 if(nrow(idCounts) > 0) {
   names(idCounts) = c("id", "occurences")
   #returnedTable = merge(x=corumData, y=idCounts, by.y="id", by.x="ComplexID", all.y=TRUE)
+  #idCounts = idCounts[which(idCounts$occurences>=2),]
   CORUMdf = merge(x=CORUMdf, y=idCounts, by.y="id", by.x="Complex", all.y=TRUE)
   returnedTable = merge(x=corumData, y=CORUMdf, by.y="Complex", by.x="ComplexID", all.y=TRUE)
 } else {
@@ -274,27 +252,27 @@ enrichedPCdata = data.frame(
   stringsAsFactors = FALSE
 )
 
-#for(i in 1:2) {
-  BPterms = enrichGOterms("M", "BP") # enrich biological processes
-  CCterms = enrichGOterms("M", "CC") # enrich cellular locations
-  PCterms = enrichPC("M") # enrich protein complexes
+for(i in 1:28) {
+  BPterms = enrichGOterms(baits[i], "BP") # enrich biological processes
+  CCterms = enrichGOterms(baits[i], "CC") # enrich cellular locations
+  PCterms = enrichPC(baits[i]) # enrich protein complexes
   
   CCdf = data.frame(
-    bait="M", 
+    bait=baits[i], 
     goID = CCterms$GO.ID, 
     term = Term(CCterms$GO.ID),
     ont = "CC",
     score = CCterms$weight,
     stringsAsFactors = FALSE)
   BPdf = data.frame(
-    bait="M", 
+    bait=baits[i], 
     goID=BPterms$GO.ID, 
     term = Term(BPterms$GO.ID),
     ont = "BP",
     score = BPterms$weight,
     stringsAsFactors = FALSE)
   PCdf = data.frame(
-    bait="M", 
+    bait=baits[i], 
     pcID=PCterms$ComplexID, 
     pcCount=PCterms$occurences,
     complexName = PCterms$ComplexName,
@@ -303,7 +281,7 @@ enrichedPCdata = data.frame(
 
   enrichedGOdata = rbind(enrichedGOdata, CCdf, BPdf)
   enrichedPCdata = rbind(enrichedPCdata, PCdf)
-#}
+}
 ```
 
 work with enriched data:
@@ -311,18 +289,13 @@ Here the list of enriched terms will be cleared of redundancy between CC terms.
 ```{r}
 #remove GO redundencies
 superEnrichedGOdata = data.frame()
-superEnrichedPCdata = data.frame()
-#for(i in 1:2) {
-  bait = "M"
+for(i in 1:28) {
+  bait = baits[i]
   
   baitGOensembl = enrichedGOdata[which(enrichedGOdata$bait == bait),]
   substrGOensembl = enrichedGOdata[which(enrichedGOdata$bait != bait),]
   
-  baitPCensembl = enrichedPCdata[which(enrichedPCdata$bait == bait),]
-  substrPCensembl = enrichedPCdata[which(enrichedPCdata$bait != bait),]
-  
   intersectGO = na.omit(intersect(baitGOensembl$goID, substrGOensembl$goID))
-  intersectPC = na.omit(intersect(baitPCensembl$pcID, substrPCensembl$pcID))
   
   for(j in 1:length(intersectGO)) {
     ind = which(
@@ -330,36 +303,26 @@ superEnrichedPCdata = data.frame()
       ) 
     baitGOensembl = baitGOensembl[-ind,]
   }
-  
-  for(j in 1:length(intersectPC)) {
-    ind = which(
-        baitPCensembl$pcID == intersectPC[j]
-      ) 
-    baitPCensembl = baitPCensembl[-ind,]
-  }
-  
+
   superEnrichedGOdata = rbind(superEnrichedGOdata, baitGOensembl)
-  superEnrichedPCdata = rbind(superEnrichedPCdata, baitPCensembl)
-#}
+}
 #PC enrichment? not for now
 ```
 Enriching genes:
 
 ```{r}
-
-#noDuplicatedEnrichedGenes = enrichedGenes[!duplicated(enrichedGenes[c("uniprotID")]),] deprecated behavior
-noDuplicatedEnrichedGenes$term = Term(noDuplicatedEnrichedGenes$goID)
-
-
-
+duplicatesInEnrichedGenes = which(duplicated(genesOfTerm$uniprotID) & 
+  genesOfTerm$goID %in% superEnrichedGOdata$goID
+)
+duplicates = genesOfTerm[duplicatesInEnrichedGenes, "uniprotID"]
+print(length(duplicates))
+for (i in 1:nrow(genesOfTerm)) {
+  if (genesOfTerm[i, "uniprotID"] %in% duplicates) {
+    genesOfTerm[i, "uniqueness"] = paste(genesOfTerm[i, "uniqueness"], "duplicated", sep="|")
+  }
+}
 ```
+
 
 ```{r}
-noDuplicatedEnrichedGenes[which(noDuplicatedEnrichedGenes$bait == "Orf6" &
-                                  noDuplicatedEnrichedGenes$ont == "BP"),c("uniprotID", "term")]
-
-superEnrichedData[which(superEnrichedData$bait == "Orf6" & !is.na(superEnrichedData$pcID)), 
-                  c("bait", "pcID")]
 ```
-
-
