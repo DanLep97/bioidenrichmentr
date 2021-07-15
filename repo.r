@@ -19,22 +19,8 @@ gene2GOdf = read.csv2("./gene2GOdf.csv")
 genesOfTerm = data.frame()
 
 #enrich data for the fingerprint
-enrichedGOdata = data.frame(
-  bait = character(0),
-  goID = character(0),
-  term = character(0),
-  score = character(0),
-  ont = character(0),
-  stringsAsFactors = FALSE
-)
-enrichedPCdata = data.frame(
-  bait = character(0),
-  pcID = character(0),
-  pcCount = integer(0),
-  complexName = character(0),
-  uniprotID = character(0),
-  stringsAsFactors = FALSE
-)
+enrichedGOdata = data.frame()
+enrichedPCdata = data.frame()
 
 sData = sData %>%
   convert(dbl(np,
@@ -146,8 +132,7 @@ filterGenes = function(GOids, ont, bait, goData, geneRange) {
     }
   }
 }
-enrichGOterms = function(bait, ont) {
-  minNumberOfGenesPerTerms = 5
+enrichGOterms = function(bait, ont,nodesOnGraph) {
   myInterestingGenes = geneNames[[bait]]
   print(c("number of genes for selected bait", length(myInterestingGenes)))
   dataGeneNames = unique(sData$UniprotID)
@@ -158,7 +143,7 @@ enrichGOterms = function(bait, ont) {
     description="topGO object for a given bait",
     ontology=ont,
     allGenes = geneList,
-    nodeSize= minNumberOfGenesPerTerms,
+    nodeSize= 5,
     annot= annFUN.gene2GO,
     gene2GO = gene2GO
   )
@@ -169,9 +154,9 @@ enrichGOterms = function(bait, ont) {
     GOdataBP, 
     score(weight01FisherResult), 
     useFullNames = TRUE,
-    useInfo = "def",
+    useInfo = "all",
     .NO.CHAR = 60,
-    firstSigNodes = 5
+    firstSigNodes = nodesOnGraph
   )
   dotFile = tempfile()
   toFile(dag$complete.dag, filename = dotFile)
@@ -224,18 +209,25 @@ enrichPC = function(bait) {
       ComplexName = NA,
       occurences = NA,
       ComplexID = NA,
+      GeneName = NA,
       stringsAsFactors = FALSE
     )
-    return(returnedTable)
   }
+  return(returnedTable)
 }
-enrichBaits = function(length) {
+enrichBaits = function(length,nodeLength) {
   for(i in 1:length) {
     print(paste("enriching bait", baits[i], ".", i, "out of", length, sep=" "))
     
-    BPterms = enrichGOterms(baits[i], "BP") # enrich biological processes
-    CCterms = enrichGOterms(baits[i], "CC") # enrich cellular locations
+    BPterms = enrichGOterms(baits[i], "BP",nodeLength) # enrich biological processes
+    CCterms = enrichGOterms(baits[i], "CC",nodeLength) # enrich cellular locations
     PCterms = enrichPC(baits[i]) # enrich protein complexes
+    
+    PCgeneName = data.frame()
+    for (j in 1:nrow(PCterms)) {
+      val = unique(sData[which(sData$UniprotID == PCterms[j, "Prey"]),"GeneName"])
+      PCgeneName = rbind(PCgeneName, data.frame(val))
+    }
     
     CCdf = data.frame(
       bait=baits[i], 
@@ -257,6 +249,7 @@ enrichBaits = function(length) {
       pcCount=PCterms$occurences,
       complexName = PCterms$ComplexName,
       uniprotID = PCterms$Prey,
+      geneName = PCgeneName$GeneName,
       stringsAsFactors = FALSE)
     
     enrichedGOdata <<- rbind(enrichedGOdata, CCdf, BPdf)
@@ -268,8 +261,9 @@ enrichBaits = function(length) {
 #API FUNCTIONS:
 #* @post fingerprint
 #* @param length
-function(length) {
-  enrichBaits(length)
+#* @param nodeLength
+function(length,nodeLength) {
+  enrichBaits(length,nodeLength)
   superEnrichedGOdata = data.frame()
   for(i in 1:length) {
     bait = baits[i]
@@ -289,14 +283,25 @@ function(length) {
   superEnrichedGOdata = rbind(superEnrichedGOdata, baitGOensembl)
   }
   
-  #highlight duplicated genes 
-  duplicatesInEnrichedGenes = which(duplicated(genesOfTerm$uniprotID) & 
-    genesOfTerm$goID %in% superEnrichedGOdata$goID
+  #enrich GO and PC genes
+  duplicatesInEnrichedGOgenes = which(duplicated(genesOfTerm$uniprotID) & 
+                                        genesOfTerm$goID %in% superEnrichedGOdata$goID
   )
-  duplicates = genesOfTerm[duplicatesInEnrichedGenes, "uniprotID"]
-  for (i in 1:nrow(genesOfTerm)) {
-    if (genesOfTerm[i, "uniprotID"] %in% duplicates) {
+  duplicatesInEnrichedPCgenes = which(duplicated(enrichedPCdata$uniprotID))
+  
+  GOduplicates = genesOfTerm[duplicatesInEnrichedGOgenes, "uniprotID"]
+  PCduplicates = enrichedPCdata[duplicatesInEnrichedPCgenes, "uniprotID"]
+  
+  for (i in 1:nrow(genesOfTerm)) { #for genes of GO
+    if (genesOfTerm[i, "uniprotID"] %in% GOduplicates) {
       genesOfTerm[i, "uniqueness"] = paste(genesOfTerm[i, "uniqueness"], "duplicated", sep="|")
+    }
+  }
+  for (i in 1:nrow(enrichedPCdata)) { #for genes of PC
+    if (enrichedPCdata[i, "uniprotID"] %in% PCduplicates) {
+      enrichedPCdata[i, "uniqueness"] = "duplicated"
+    } else {
+      enrichedPCdata[i, "uniqueness"] = "unique"
     }
   }
   
@@ -311,6 +316,13 @@ function(length) {
     "graphsCC" = graphsCC
   )
   write_json(res, "~/Desktop/sitestage/enrichedData.json")
+  genesOfTerm = data.frame()
+  superEnrichedGOdata = data.frame()
+  enrichedPCdata = data.frame()
+  graphsBP = vector("list", length=length(baits))
+  graphsCC = vector("list", length=length(baits))
+  names(graphsCC) = baits
+  names(graphsBP) = baits
   return(res)
 }
 

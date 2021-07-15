@@ -70,6 +70,15 @@ names(graphsBP) = baits
 #List containing CC piechart data
 ccList = vector("list", length=length(baits))
 names(ccList) = baits
+
+#Tot parents and children for different GO terms
+CCparents = as.list(GOCCPARENTS)
+CCancestors = as.list(GOCCANCESTOR)
+CCoffspring = as.list(GOCCOFFSPRING)
+BPparents = as.list(GOBPPARENTS)
+BPoffspring = as.list(GOBPOFFSPRING)
+
+GO = ""
 ```
 
 
@@ -92,32 +101,59 @@ enrichGOterms = function(bait, ont) {
     annot= annFUN.gene2GO,
     gene2GO = gene2GO
   )
-  weight01FisherResult = runTest(GOdataBP, statistic = "fisher") # default algorithm = weight01
+  #GO <<- buildLevels(GOdataBP)
+  # weight01FisherResult = runTest(GOdataBP, statistic = "fisher") # default algorithm = weight01
   
-  #add graph to the list of graphs
-  dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), useFullNames = TRUE, firstSigNodes = 5, useInfo = "all")
-  dotFile = tempfile()
-  toFile(dag$complete.dag, filename = dotFile)
-  dotStr = readLines(dotFile)
-  if (ont == "BP") {
-    graphsBP[[bait]] <<- dotStr
-  } else {
-    graphsCC[[bait]] <<- dotStr
-  }
-  unlink(dotFile)
+  # add graph to the list of graphs
+  # dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), useFullNames = TRUE, firstSigNodes = 5, useInfo = "all")
+  # dotFile = tempfile()
+  # toFile(dag$complete.dag, filename = dotFile)
+  # dotStr = readLines(dotFile)
+  # if (ont == "BP") {
+  #   graphsBP[[bait]] <<- dotStr
+  # } else {
+  #   graphsCC[[bait]] <<- dotStr
+  # }
+  # unlink(dotFile)
   
   #generate piechart data if cc ont
   
-  allRes = GenTable(
-    GOdataBP,
-    weight = weight01FisherResult,
-    topNodes = 20,
-    orderBy="weight"
-  )
-  print(allRes)
-  filterGenes(allRes$GO.ID, ont, bait, GOdataBP, myInterestingGenes)
-  return(allRes)
+  # allRes = GenTable(
+  #   GOdataBP,
+  #   weight = weight01FisherResult,
+  #   topNodes = 20,
+  #   orderBy="weight"
+  # )
+  if (ont == "CC") {#generate the data for the pie chart
+    LCA(allRes$GO.ID)
+  }
+  # filterGenes(allRes$GO.ID, ont, bait, GOdataBP, myInterestingGenes)
+  # return(allRes)
 }
+```
+
+Generate data for the piechart depicting dynamically obtained relevant CC terms. From the perspective of the CC tree, we get the list of ancestors for each terms and we look for the Last Common Ancestor (LCA). It encompasses terms far away in the hierarchy. 
+For terms at the top of the tree, they will have the most terms included. Those terms are filtered out simply because they have the higher number of children.
+```{r}
+LCA = function(GOids) {
+  CCparentsDf = data.frame()
+  for (i in 1:length(GOids)) {
+    goID = GOids[i]
+    parents = CCancestors[[goID]]
+    pLastInd = match("all", parents)
+    parents = parents[-pLastInd]
+    df = data.frame(
+      goID = goID,
+      parent = parents,
+      stringsAsFactors = F
+    )
+    CCparentsDf = rbind(CCparentsDf,df)
+  }
+}
+```
+
+```{r eval=FALSE}
+enrichGOterms("NSP3", "CC")
 ```
 filtered genes has to be without ancestor redondencies, associated to GO term but more importantly to the bait because this information will be used for interaction verification experience. Drug design can be done only with the most important genes of associated functions, the bait is not interesting for this purpose.
 GeneRange contains the list of genes that the search should be limit to because gene2GOdf contains every genes of each terms. Filtered genes based only on GOID therefore doesn't make any sense without a restricted set of genes of reference (myInterestingGenes)
@@ -126,11 +162,11 @@ genesOfTerm = data.frame(stringsAsFactors = FALSE)
 filterGenes = function(GOids, ont, bait, goData, geneRange) {
   
   if (ont == "CC") {
-    totAncestors = as.list(GOCCPARENTS)
-    totOffspring = as.list(GOCCOFFSPRING)
+    totAncestors = CCparents
+    totOffspring = CCoffspring
   } else {
-    totAncestors = as.list(GOBPPARENTS)
-    totOffspring = as.list(GOBPOFFSPRING)
+    totAncestors = BPparents
+    totOffspring = BPoffspring
   }
   for(i in 1:length(GOids)) {
     goTerm = GOids[i]
@@ -183,12 +219,6 @@ filterGenes = function(GOids, ont, bait, goData, geneRange) {
 }
 ```
 
-
-```{r eval=FALSE}
-enrichGOterms("NSP3", "CC")
-```
-
-
 Generating CORUM protein complex ordering:
 
 ```{r}
@@ -214,65 +244,57 @@ enrichPC = function(bait) {
   
   # make the occurence count table with added columns of interest as the presentation table. 
   idCounts = as.data.frame(table(CORUMdf$Complex), stringsAsFactors = FALSE)
-if(nrow(idCounts) > 0) {
-  names(idCounts) = c("id", "occurences")
-  #returnedTable = merge(x=corumData, y=idCounts, by.y="id", by.x="ComplexID", all.y=TRUE)
-  #idCounts = idCounts[which(idCounts$occurences>=2),]
-  CORUMdf = merge(x=CORUMdf, y=idCounts, by.y="id", by.x="Complex", all.y=TRUE)
-  returnedTable = merge(x=corumData, y=CORUMdf, by.y="Complex", by.x="ComplexID", all.y=TRUE)
-} else {
-  returnedTable = data.frame(
-    ComplexName = NA,
-    occurences = NA,
-    ComplexID = NA,
-    stringsAsFactors = FALSE
-  )
-  return(returnedTable)
+  if(nrow(idCounts) > 0) {
+    names(idCounts) = c("id", "occurences")
+    #returnedTable = merge(x=corumData, y=idCounts, by.y="id", by.x="ComplexID", all.y=TRUE)
+    #idCounts = idCounts[which(idCounts$occurences>=2),]
+    CORUMdf = merge(x=CORUMdf, y=idCounts, by.y="id", by.x="Complex", all.y=TRUE)
+    returnedTable = merge(x=corumData, y=CORUMdf, by.y="Complex", by.x="ComplexID", all.y=TRUE)
+  } else {
+    returnedTable = data.frame(
+      ComplexName = NA,
+      occurences = NA,
+      ComplexID = NA,
+      stringsAsFactors = FALSE
+    )
   }
+  return(returnedTable)
 }
 ```
 
 ```{r eval=FALSE}
 #BPterms = enrichGOterms("NSP6", "BP") # enrich biological processes
 #CCterms = enrichGOterms("NSP6", "CC") # enrich cellular locations
-PCterms = enrichPC("Orf6") # enrich protein complexes
+PCterms = enrichPC("M") # enrich protein complexes
 print(PCterms)
 ```
 
 generate enriched data:
-```{r include=FALSE}
-enrichedGOdata = data.frame(
-    bait = character(0),
-    goID = character(0),
-    term = character(0),
-    ont = character(0),
-    score = character(0),
-    stringsAsFactors = FALSE
-  )
-enrichedPCdata = data.frame(
-  bait = character(0),
-  pcID = character(0),
-  pcCount = integer(0),
-  complexName = character(0),
-  uniprotID = character(0),
-  stringsAsFactors = FALSE
-)
+```{r}
+enrichedGOdata = data.frame()
+enrichedPCdata = data.frame()
 
-for(i in 1:28) {
+for(i in 1:3) {
   BPterms = enrichGOterms(baits[i], "BP") # enrich biological processes
   CCterms = enrichGOterms(baits[i], "CC") # enrich cellular locations
   PCterms = enrichPC(baits[i]) # enrich protein complexes
   
+  PCgeneName = data.frame()
+  for (j in 1:nrow(PCterms)) {
+    val = unique(sData[which(sData$UniprotID == PCterms[j, "Prey"]),"GeneName"])
+    PCgeneName = rbind(PCgeneName, data.frame(val))
+  }
+  
   CCdf = data.frame(
-    bait=baits[i], 
-    goID = CCterms$GO.ID, 
+    bait=baits[i],
+    goID = CCterms$GO.ID,
     term = Term(CCterms$GO.ID),
     ont = "CC",
     score = CCterms$weight,
     stringsAsFactors = FALSE)
   BPdf = data.frame(
-    bait=baits[i], 
-    goID=BPterms$GO.ID, 
+    bait=baits[i],
+    goID=BPterms$GO.ID,
     term = Term(BPterms$GO.ID),
     ont = "BP",
     score = BPterms$weight,
@@ -282,6 +304,7 @@ for(i in 1:28) {
     pcID=PCterms$ComplexID, 
     pcCount=PCterms$occurences,
     complexName = PCterms$ComplexName,
+    geneName = PCgeneName$GeneName,
     uniprotID = PCterms$Prey,
     stringsAsFactors = FALSE)
 
@@ -317,17 +340,28 @@ for(i in 1:28) {
 }
 #PC enrichment? not for now
 ```
-Enriching genes:
+Enriching GO and PC genes:
 
 ```{r}
-duplicatesInEnrichedGenes = which(duplicated(genesOfTerm$uniprotID) & 
+#enrich GO and PC genes
+duplicatesInEnrichedGOgenes = which(duplicated(genesOfTerm$uniprotID) & 
   genesOfTerm$goID %in% superEnrichedGOdata$goID
 )
-duplicates = genesOfTerm[duplicatesInEnrichedGenes, "uniprotID"]
-print(length(duplicates))
-for (i in 1:nrow(genesOfTerm)) {
-  if (genesOfTerm[i, "uniprotID"] %in% duplicates) {
+duplicatesInEnrichedPCgenes = which(duplicated(enrichedPCdata$uniprotID))
+
+GOduplicates = genesOfTerm[duplicatesInEnrichedGOgenes, "uniprotID"]
+PCduplicates = enrichedPCdata[duplicatesInEnrichedPCgenes, "uniprotID"]
+
+for (i in 1:nrow(genesOfTerm)) { #for genes of GO
+  if (genesOfTerm[i, "uniprotID"] %in% GOduplicates) {
     genesOfTerm[i, "uniqueness"] = paste(genesOfTerm[i, "uniqueness"], "duplicated", sep="|")
+  }
+}
+for (i in 1:nrow(enrichedPCdata)) { #for genes of PC
+  if (enrichedPCdata[i, "uniprotID"] %in% PCduplicates) {
+    enrichedPCdata[i, "uniqueness"] = "duplicated"
+  } else {
+    enrichedPCdata[i, "uniqueness"] = "unique"
   }
 }
 ```

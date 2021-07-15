@@ -22,7 +22,6 @@ data(ALL)
 
 ```{r}
 rawGO = read_excel("~/Desktop/cours/stage/R/GO.xlsx")
-testGO = read.table(file = 'QuickGO-annotations-1624617382809-20210625.tsv', sep = '\t', header = TRUE)
 gene2GOdf = read.csv2("./gene2GOdf.csv", stringsAsFactors = FALSE)
 ```
 
@@ -124,6 +123,7 @@ length(genes(GOdataBP))
 ```{r}
 weight01FisherResult = runTest(GOdataBP, statistic = "fisher", algorithm = "weight01")
 dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), useFullNames = TRUE, firstSigNodes = 5, .NO.CHAR = 60, useInfo = "def")
+score(weight01FisherResult)
 ```
 
 
