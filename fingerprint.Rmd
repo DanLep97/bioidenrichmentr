@@ -1,10 +1,13 @@
 ---
-title: "R Notebook"
-output: html_notebook
+title: "GO terms and CORUM complexes enrichment for a given bait-interactors dataset"
+author: "Lepikhov Daniil"
+output:
+  html_document:
+    df_print: paged
 ---
 initialize data:
 
-```{r}
+```{r message=FALSE, warning=FALSE, include=FALSE}
 library(topGO)
 library(readxl)
 library(dplyr)
@@ -18,6 +21,7 @@ library(Rgraphviz)
 library(GO.db)
 library(foreach)
 library(doParallel)
+library(ggplot2)
 
 # data prep:
 sData = read_excel("sData.xlsx")
@@ -77,18 +81,40 @@ CCancestors = as.list(GOCCANCESTOR)
 CCoffspring = as.list(GOCCOFFSPRING)
 BPparents = as.list(GOBPPARENTS)
 BPoffspring = as.list(GOBPOFFSPRING)
-
-GO = ""
 ```
 
+Visualize mean number of interactors per bait:
+```{r message=FALSE, warning=FALSE}
+countVals = data.frame()
+for (i in 1:length(geneNames)) {
+  count = length(geneNames[[i]])
+  countVals = rbind(countVals, data.frame(geneCount = count, bait = names(geneNames)[i], stringsAsFactors = FALSE))
+}
+moy = sum(countVals$geneCount)/length(geneNames)
+minCount = min(countVals$geneCount)
+maxCount = max(countVals$geneCount)
+
+countVals = countVals[order(countVals$geneCount),]
+levels = factor(countVals$bait, level = countVals$bait)
+
+p = ggplot() + 
+  geom_col(data = countVals, aes(x = levels, y = geneCount), fill="darkblue", width=.2) +
+  geom_boxplot(data = countVals, aes(y=geneCount), position = position_identity()) +
+  labs(y = "Interactors count", x="Bait", title="Interactors count per bait") +
+  theme(text = element_text(size=20), axis.text.x = element_text(angle=90, hjust=1))
+print(p)
+
+# gBox
+
+totalCount = sum(countVals$geneCount)
+summary(countVals$geneCount)
+```
 
 Generating GOBP and GOCC:
-
 ```{r message=FALSE, include=FALSE}
 enrichGOterms = function(bait, ont) {
   minNumberOfGenesPerTerms = 5
   myInterestingGenes = geneNames[[bait]]
-  print(c("number of genes for selected bait", length(myInterestingGenes)))
   dataGeneNames = unique(sData$UniprotID)
   geneList = factor(as.integer(dataGeneNames %in% myInterestingGenes))
   names(geneList) = dataGeneNames
@@ -101,63 +127,39 @@ enrichGOterms = function(bait, ont) {
     annot= annFUN.gene2GO,
     gene2GO = gene2GO
   )
-  #GO <<- buildLevels(GOdataBP)
-  # weight01FisherResult = runTest(GOdataBP, statistic = "fisher") # default algorithm = weight01
-  
+  weight01FisherResult = runTest(GOdataBP, statistic = "fisher") # default algorithm = weight01
+
   # add graph to the list of graphs
-  # dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), useFullNames = TRUE, firstSigNodes = 5, useInfo = "all")
-  # dotFile = tempfile()
-  # toFile(dag$complete.dag, filename = dotFile)
-  # dotStr = readLines(dotFile)
-  # if (ont == "BP") {
-  #   graphsBP[[bait]] <<- dotStr
-  # } else {
-  #   graphsCC[[bait]] <<- dotStr
-  # }
-  # unlink(dotFile)
-  
+  dag = showSigOfNodes(GOdataBP, score(weight01FisherResult), useFullNames = TRUE, firstSigNodes = 5, useInfo = "all")
+  dotFile = tempfile()
+  toFile(dag$complete.dag, filename = dotFile)
+  dotStr = readLines(dotFile)
+  if (ont == "BP") {
+    graphsBP[[bait]] <<- dotStr
+  } else {
+    graphsCC[[bait]] <<- dotStr
+  }
+  unlink(dotFile)
+
   #generate piechart data if cc ont
-  
-  # allRes = GenTable(
-  #   GOdataBP,
-  #   weight = weight01FisherResult,
-  #   topNodes = 20,
-  #   orderBy="weight"
-  # )
+
+  allRes = GenTable(
+    GOdataBP,
+    weight = weight01FisherResult,
+    topNodes = 20,
+    orderBy="weight"
+  )
   if (ont == "CC") {#generate the data for the pie chart
-    LCA(allRes$GO.ID)
+    #LCA(allRes$GO.ID)
   }
-  # filterGenes(allRes$GO.ID, ont, bait, GOdataBP, myInterestingGenes)
-  # return(allRes)
+  filterGenes(allRes$GO.ID, ont, bait, GOdataBP, myInterestingGenes)
+  return(allRes)
 }
 ```
 
-Generate data for the piechart depicting dynamically obtained relevant CC terms. From the perspective of the CC tree, we get the list of ancestors for each terms and we look for the Last Common Ancestor (LCA). It encompasses terms far away in the hierarchy. 
-For terms at the top of the tree, they will have the most terms included. Those terms are filtered out simply because they have the higher number of children.
-```{r}
-LCA = function(GOids) {
-  CCparentsDf = data.frame()
-  for (i in 1:length(GOids)) {
-    goID = GOids[i]
-    parents = CCancestors[[goID]]
-    pLastInd = match("all", parents)
-    parents = parents[-pLastInd]
-    df = data.frame(
-      goID = goID,
-      parent = parents,
-      stringsAsFactors = F
-    )
-    CCparentsDf = rbind(CCparentsDf,df)
-  }
-}
-```
-
-```{r eval=FALSE}
-enrichGOterms("NSP3", "CC")
-```
-filtered genes has to be without ancestor redondencies, associated to GO term but more importantly to the bait because this information will be used for interaction verification experience. Drug design can be done only with the most important genes of associated functions, the bait is not interesting for this purpose.
+filtered genes has to be without ancestor redundancies, associated to GO term but more importantly to the bait because this information will be used for interaction verification experience. Drug design can be done only with the most important genes of associated functions, the bait is not interesting for this purpose.
 GeneRange contains the list of genes that the search should be limit to because gene2GOdf contains every genes of each terms. Filtered genes based only on GOID therefore doesn't make any sense without a restricted set of genes of reference (myInterestingGenes)
-```{r}
+```{r include=FALSE}
 genesOfTerm = data.frame(stringsAsFactors = FALSE)
 filterGenes = function(GOids, ont, bait, goData, geneRange) {
   
@@ -209,6 +211,7 @@ filterGenes = function(GOids, ont, bait, goData, geneRange) {
       geneSymbol = sData[which(sData$UniprotID == gene),"GeneName"]
       genesOfTerm <<- rbind(genesOfTerm, data.frame(
         stringsAsFactors = FALSE,
+        bait = bait,
         goID = goTerm,
         uniprotID = gene,
         geneSymbol = geneSymbol[1,"GeneName"],
@@ -221,12 +224,13 @@ filterGenes = function(GOids, ont, bait, goData, geneRange) {
 
 Generating CORUM protein complex ordering:
 
-```{r}
+```{r include=FALSE}
 enrichPC = function(bait) {
   preys = geneNames[[bait]]
   preyLength = length(preys)
   CORUMdf = data.frame(
-    Prey=character(0), Complex=character(0), stringsAsFactors = FALSE)
+    Prey=character(0), Complex=character(0), stringsAsFactors = FALSE
+    )
 
   for(i in 1:preyLength) {
     prey = preys[i]
@@ -261,20 +265,12 @@ enrichPC = function(bait) {
   return(returnedTable)
 }
 ```
-
-```{r eval=FALSE}
-#BPterms = enrichGOterms("NSP6", "BP") # enrich biological processes
-#CCterms = enrichGOterms("NSP6", "CC") # enrich cellular locations
-PCterms = enrichPC("M") # enrich protein complexes
-print(PCterms)
-```
-
 generate enriched data:
-```{r}
+```{r echo=TRUE, message=FALSE, warning=FALSE}
 enrichedGOdata = data.frame()
 enrichedPCdata = data.frame()
 
-for(i in 1:3) {
+for(i in 1:2) {
   BPterms = enrichGOterms(baits[i], "BP") # enrich biological processes
   CCterms = enrichGOterms(baits[i], "CC") # enrich cellular locations
   PCterms = enrichPC(baits[i]) # enrich protein complexes
@@ -291,12 +287,14 @@ for(i in 1:3) {
     term = Term(CCterms$GO.ID),
     ont = "CC",
     score = CCterms$weight,
+    unique = TRUE,
     stringsAsFactors = FALSE)
   BPdf = data.frame(
     bait=baits[i],
     goID=BPterms$GO.ID,
     term = Term(BPterms$GO.ID),
     ont = "BP",
+    unique = TRUE,
     score = BPterms$weight,
     stringsAsFactors = FALSE)
   PCdf = data.frame(
@@ -314,11 +312,11 @@ for(i in 1:3) {
 ```
 
 work with enriched data:
-Here the list of enriched terms will be cleared of redundancy between CC terms.
-```{r}
+Here the list of enriched terms will be cleared of redundancy between CC terms and unique terms are highlighted
+```{r include=FALSE}
 #remove GO redundencies
-superEnrichedGOdata = data.frame()
-for(i in 1:28) {
+#superEnrichedGOdata = data.frame()
+for(i in 1:2) {
   bait = baits[i]
   
   baitGOensembl = enrichedGOdata[which(enrichedGOdata$bait == bait),]
@@ -328,24 +326,53 @@ for(i in 1:28) {
   
   for(j in 1:length(intersectGO)) {
     ind = which(
-        baitGOensembl$goID == intersectGO[j]
+        enrichedGOdata$goID == intersectGO[j]
       ) 
-    baitGOensembl = baitGOensembl[-ind,]
+    enrichedGOdata[ind, "unique"] = FALSE
   }
-
-  superEnrichedGOdata = rbind(superEnrichedGOdata, baitGOensembl)
-  
-  #remove useless entries from graphs
   
 }
 #PC enrichment? not for now
 ```
+
+Redundant terms occurrences are counted and related baits are stored to generate PDF and vizualize most redundant terms
+```{r include=FALSE}
+nonUniqueBPTerms = enrichedGOdata[which(enrichedGOdata$unique == FALSE & enrichedGOdata$ont == "BP"), "goID"]
+nonUniqueCCTerms = enrichedGOdata[which(enrichedGOdata$unique == FALSE & enrichedGOdata$ont == "CC"), "goID"]
+
+nonUniqueBPTermsCount = as.data.frame(table(nonUniqueBPTerms), stringsAsFactors = FALSE)
+nonUniqueBPTermsCount$term = Term(nonUniqueBPTermsCount$nonUniqueBPTerms)
+for (i in 1:nrow(nonUniqueBPTermsCount)) {
+  goID = nonUniqueBPTermsCount[i, "nonUniqueBPTerms"]
+  foundTerms = enrichedGOdata[which(enrichedGOdata$goID == goID), "bait"]
+  nonUniqueBPTermsCount[i, "inBaits"] = paste(foundTerms, collapse = ";")
+}
+
+nonUniqueCCTermsCount = as.data.frame(table(nonUniqueCCTerms), stringsAsFactors = FALSE)
+nonUniqueCCTermsCount$term = Term(nonUniqueCCTermsCount$nonUniqueCCTerms)
+for (i in 1:nrow(nonUniqueCCTermsCount)) {
+  goID = nonUniqueCCTermsCount[i, "nonUniqueCCTerms"]
+  foundTerms = enrichedGOdata[which(enrichedGOdata$goID == goID), "bait"]
+  nonUniqueCCTermsCount[i, "inBaits"] = paste(foundTerms, collapse = ";")
+}
+```
+Generate PDF files:
+```{r eval=FALSE, include=FALSE}
+pdf("redundantGOterms.pdf", width = 15, height = 30)
+grid.table(nonUniqueBPTermsCount[order(-nonUniqueBPTermsCount$Freq),])
+dev.off()
+
+pdf("redundantCCterms.pdf", width = 15, height = 40)
+grid.table(nonUniqueCCTermsCount[order(-nonUniqueCCTermsCount$Freq),])
+dev.off()
+```
+
 Enriching GO and PC genes:
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 #enrich GO and PC genes
 duplicatesInEnrichedGOgenes = which(duplicated(genesOfTerm$uniprotID) & 
-  genesOfTerm$goID %in% superEnrichedGOdata$goID
+  genesOfTerm$goID %in% enrichedGOdata$goID
 )
 duplicatesInEnrichedPCgenes = which(duplicated(enrichedPCdata$uniprotID))
 
@@ -364,9 +391,4 @@ for (i in 1:nrow(enrichedPCdata)) { #for genes of PC
     enrichedPCdata[i, "uniqueness"] = "unique"
   }
 }
-```
-
-generate data for the piechart:
-```{r}
-
 ```

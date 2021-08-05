@@ -124,6 +124,7 @@ filterGenes = function(GOids, ont, bait, goData, geneRange) {
       geneSymbol = sData[which(sData$UniprotID == gene),"GeneName"]
       genesOfTerm <<- rbind(genesOfTerm, data.frame(
         stringsAsFactors = FALSE,
+        bait = bait,
         goID = goTerm,
         uniprotID = gene,
         geneSymbol = geneSymbol[1,"GeneName"],
@@ -235,13 +236,15 @@ enrichBaits = function(length,nodeLength) {
       term = Term(CCterms$GO.ID),
       ont = "CC",
       score = CCterms$weight,
+      unique = TRUE,
       stringsAsFactors = FALSE)
     BPdf = data.frame(
       bait=baits[i], 
-      goID=BPterms$GO.ID, 
+      goID=BPterms$GO.ID,
       term = Term(BPterms$GO.ID),
       ont = "BP",
       score = BPterms$weight,
+      unique = TRUE,
       stringsAsFactors = FALSE)
     PCdf = data.frame(
       bait=baits[i], 
@@ -264,8 +267,8 @@ enrichBaits = function(length,nodeLength) {
 #* @param nodeLength
 function(length,nodeLength) {
   enrichBaits(length,nodeLength)
-  superEnrichedGOdata = data.frame()
   for(i in 1:length) {
+    #highlight redundant genes
     bait = baits[i]
     
     baitGOensembl = enrichedGOdata[which(enrichedGOdata$bait == bait),]
@@ -275,17 +278,15 @@ function(length,nodeLength) {
     
     for(j in 1:length(intersectGO)) {
       ind = which(
-        baitGOensembl$goID == intersectGO[j]
+        enrichedGOdata$goID == intersectGO[j]
       ) 
-      baitGOensembl = baitGOensembl[-ind,]
+      enrichedGOdata[ind, "unique"] = FALSE
     }
-    
-  superEnrichedGOdata = rbind(superEnrichedGOdata, baitGOensembl)
   }
   
   #enrich GO and PC genes
   duplicatesInEnrichedGOgenes = which(duplicated(genesOfTerm$uniprotID) & 
-                                        genesOfTerm$goID %in% superEnrichedGOdata$goID
+    genesOfTerm$goID %in% enrichedGOdata$goID
   )
   duplicatesInEnrichedPCgenes = which(duplicated(enrichedPCdata$uniprotID))
   
@@ -309,7 +310,7 @@ function(length,nodeLength) {
   res = list(
     #"enrichedGenes" = enrichedGenes,
     "enrichedGenes" = genesOfTerm,
-    "enrichedGOdata" = superEnrichedGOdata,
+    "enrichedGOdata" = enrichedGOdata,
     "enrichedPCdata" = enrichedPCdata,
     "baits" = baits[1:length],
     "graphsBP" = graphsBP,
@@ -317,10 +318,10 @@ function(length,nodeLength) {
   )
   write_json(res, "~/Desktop/sitestage/enrichedData.json")
   genesOfTerm = data.frame()
-  superEnrichedGOdata = data.frame()
-  enrichedPCdata = data.frame()
-  graphsBP = vector("list", length=length(baits))
-  graphsCC = vector("list", length=length(baits))
+  enrichedPCdata <<- data.frame()
+  enrichedGOdata <<- data.frame()
+  graphsBP <<- vector("list", length=length(baits))
+  graphsCC <<- vector("list", length=length(baits))
   names(graphsCC) = baits
   names(graphsBP) = baits
   return(res)
